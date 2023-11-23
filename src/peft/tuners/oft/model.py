@@ -20,10 +20,19 @@ from typing import Dict, Type, Union
 import torch
 from torch import nn
 
+from peft.import_utils import is_bnb_4bit_available, is_bnb_available
 from peft.tuners.lycoris_utils import LycorisConfig, LycorisTuner
+from peft.tuners.tuners_utils import BaseTuner, BaseTunerLayer, check_target_module_exists
 
 from .layer import Conv2d, Linear, OFTLayer
 
+if is_bnb_available():
+    import bitsandbytes as bnb
+
+    from .bnb import Linear8bitLt
+
+if is_bnb_4bit_available():
+    from .bnb import Linear4bit
 
 class OFTModel(LycorisTuner):
     """
@@ -107,9 +116,80 @@ class OFTModel(LycorisTuner):
         kwargs = config.to_dict()
         kwargs["r"] = config.rank_pattern.get(target_name_key, config.r)
         kwargs["alpha"] = config.alpha_pattern.get(target_name_key, config.alpha)
+        kwargs["loaded_in_8bit"] = optional_kwargs.pop("loaded_in_8bit", False)
+        kwargs["loaded_in_4bit"] = optional_kwargs.pop("loaded_in_4bit", False)
 
         if isinstance(target, OFTLayer):
             target.update_layer(adapter_name, **kwargs)
         else:
             new_module = self._create_new_module(config, adapter_name, target, **kwargs)
             self._replace_module(parent, target_name, new_module, target)
+            
+    def _replace_module(self, parent, child_name, new_module, child):
+        setattr(parent, child_name, new_module)
+        # It's not necessary to set requires_grad here, as that is handled by
+        # _mark_only_adapters_as_trainable
+
+        # child layer wraps the original module, unpack it
+        if hasattr(child, "base_layer"):
+            child = child.base_layer
+
+        if not hasattr(new_module, "base_layer"):
+            new_module.weight = child.weight
+            if hasattr(child, "bias"):
+                new_module.bias = child.bias
+
+        if getattr(child, "state", None) is not None:
+            if hasattr(new_module, "base_layer"):
+                new_module.base_layer.state = child.state
+            else:
+                new_module.state = child.state
+            new_module.to(child.weight.device)
+
+        # dispatch to correct device
+        for name, module in new_module.named_modules():
+            if (self.prefix in name) or ("ranknum" in name):
+                weight = child.qweight if hasattr(child, "qweight") else child.weight
+                module.to(weight.device)
+
+    @staticmethod
+    def _create_new_module(lora_config, adapter_name, target, **kwargs):
+
+        loaded_in_8bit = kwargs.pop("loaded_in_8bit", False)
+        loaded_in_4bit = kwargs.pop("loaded_in_4bit", False)
+
+        if isinstance(target, BaseTunerLayer):
+            target_base_layer = target.get_base_layer()
+        else:
+            target_base_layer = target
+
+        if loaded_in_8bit and isinstance(target_base_layer, bnb.nn.Linear8bitLt):
+            eightbit_kwargs = kwargs.copy()
+            eightbit_kwargs.update(
+                {
+                    "has_fp16_weights": target.state.has_fp16_weights,
+                    "memory_efficient_backward": target.state.memory_efficient_backward,
+                    "threshold": target.state.threshold,
+                    "index": target.index,
+                }
+            )
+            new_module = Linear8bitLt(target, adapter_name, **eightbit_kwargs)
+        elif loaded_in_4bit and is_bnb_4bit_available() and isinstance(target_base_layer, bnb.nn.Linear4bit):
+            fourbit_kwargs = kwargs.copy()
+            fourbit_kwargs.update(
+                {
+                    "compute_dtype": target.compute_dtype,
+                    "compress_statistics": target.weight.compress_statistics,
+                    "quant_type": target.weight.quant_type,
+                }
+            )
+            new_module = Linear4bit(target, adapter_name, **fourbit_kwargs)
+        elif isinstance(target_base_layer, torch.nn.Linear):
+            new_module = Linear(target, adapter_name, **kwargs)
+        else:
+            raise ValueError(
+                f"Target module {target} is not supported. Currently, only the following modules are supported: "
+                "`torch.nn.Linear`, `torch.nn.Embedding`, `torch.nn.Conv2d`, `transformers.pytorch_utils.Conv1D`."
+            )
+
+        return new_module

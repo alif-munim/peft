@@ -318,10 +318,21 @@ class Linear(OFTLayer):
 
         base_weight = base_layer.weight.data if prev_weight is None else prev_weight
         base_weight = torch.transpose(base_weight, 0, 1)
+        
+        # print("delta 1: ", delta_weight.shape) # torch.float32 (2048, 2048)
+        # print("base 1: ", base_weight.shape) # torch.uint8, (5504, 2048)
+        
         if base_weight.shape[0] != delta_weight.shape[1]:
             # when in channels is not divisible by r
             delta_weight = delta_weight[: base_weight.shape[0], : base_weight.shape[0]]
+            
+        # print("delta 2: ", delta_weight.shape) # torch.float32 (2048, 2048)
+        # print("base 2: ", base_weight.shape) # torch.uint8 (5504, 2048)
+        
         weight = torch.mm(delta_weight, base_weight)
+        
+        # print("weight: ", weight.shape) # (2048, 2048)
+        
         weight = torch.transpose(weight, 0, 1)
         return weight
 
