@@ -48,6 +48,7 @@ class LoraLayer(BaseTunerLayer):
         self.merged_adapters = []
 
         base_layer = self.get_base_layer()
+        print(f"Lora base layer type: {type(base_layer)}")
         if isinstance(base_layer, nn.Linear):
             in_features, out_features = base_layer.in_features, base_layer.out_features
         elif isinstance(base_layer, nn.Conv2d):

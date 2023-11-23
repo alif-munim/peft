@@ -70,6 +70,9 @@ def get_peft_model_state_dict(model, state_dict=None, adapter_name="default", un
                 rank_pattern = {k.replace(f".{adapter_name}", ""): v for k, v in rank_pattern.items()}
                 config.rank_pattern = rank_pattern
                 to_return = model.resize_state_dict_by_rank_pattern(rank_pattern, to_return, adapter_name)
+    
+    elif config.peft_type == PeftType.OFT:
+        to_return = {k: state_dict[k] for k in state_dict if "oft_" in k}
 
     elif config.peft_type == PeftType.LOHA:
         to_return = {k: state_dict[k] for k in state_dict if "hada_" in k}

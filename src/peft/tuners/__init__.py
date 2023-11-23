@@ -19,6 +19,7 @@
 
 from .adaption_prompt import AdaptionPromptConfig, AdaptionPromptModel
 from .lora import LoraConfig, LoraModel
+from .oft import OFTConfig, OFTModel
 from .loha import LoHaConfig, LoHaModel
 from .lokr import LoKrConfig, LoKrModel
 from .ia3 import IA3Config, IA3Model

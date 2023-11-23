@@ -314,14 +314,12 @@ class BaseTunerLayer(ABC):
     merged_adapters: list[str] = []
 
     def get_base_layer(self) -> nn.Module:
-        """
-        (Recursively) get the base_layer.
-
-        This is necessary for the case that the tuner layer wraps another tuner layer.
-
-        """
         base_layer = self
+        seen_layers = {id(self)}
         while hasattr(base_layer, "base_layer"):
+            if id(base_layer.base_layer) in seen_layers:
+                raise ValueError("Cycle detected in base_layer chain.")
+            seen_layers.add(id(base_layer.base_layer))
             base_layer = base_layer.base_layer
         return base_layer
 
